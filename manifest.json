@@ -1,0 +1,9 @@
+{
+  "name": "Mei Word Cards",
+  "short_name": "Mei Word Cards",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#f3f7fb",
+  "theme_color": "#3aa0ff",
+  "icons": []
+}

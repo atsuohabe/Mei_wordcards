@@ -1,0 +1,497 @@
+import { CONFIG, APP_VERSION } from './config.js?v=2026-11-07a';
+import { listSheets, loadCards } from './data.js?v=2026-11-07a';
+import { lastChoice, session, speed, voiceName } from './storage.js?v=2026-11-07a';
+import * as speech from './speech.js?v=2026-11-07a';
+
+const $ = (id) => document.getElementById(id);
+
+const el = {
+  views: { home: $('view-home'), list: $('view-list'), study: $('view-study'), done: $('view-done') },
+  sheetList: $('sheet-list'),
+  modeBtns: document.querySelectorAll('.mode-btn'),
+  startBtn: $('start-btn'),
+  homeError: $('home-error'),
+  voiceInfo: $('voice-info'),
+  updateBar: $('update-bar'),
+  speedBtns: document.querySelectorAll('.speed-btn'),
+  voiceSelect: $('voice-select'),
+  listBackBtn: $('list-back-btn'),
+  listTitle: $('list-title'),
+  listCount: $('list-count'),
+  wordList: $('word-list'),
+  resumeBox: $('resume-box'),
+  resumeInfo: $('resume-info'),
+  resumeBtn: $('resume-btn'),
+  quitBtn: $('quit-btn'),
+  sheetName: $('sheet-name'),
+  progress: $('progress'),
+  progressFill: $('progress-fill'),
+  card: $('card'),
+  cardWord: $('card-word'),
+  cardJa: $('card-ja'),
+  speakBtn: $('speak-btn'),
+  speakBtnBack: $('speak-btn-back'),
+  flipBtn: $('flip-btn'),
+  answerRow: $('answer-row'),
+  yesBtn: $('yes-btn'),
+  noBtn: $('no-btn'),
+  againBtn: $('again-btn'),
+  homeBtn: $('home-btn'),
+  doneDetail: $('done-detail'),
+};
+
+/** カードがめくれ終わるまでの時間（css の .card transition と合わせる） */
+const FLIP_MS = 350;
+
+/** 学習中の状態 */
+let state = null;
+/** 予約中の処理（読み上げ・表示の切り替え） */
+let timers = [];
+/** ホームでの選択 */
+let selected = { sheetId: null, sheetName: null, mode: 'order' };
+
+/* ---------------- 画面切り替え ---------------- */
+
+function showView(name) {
+  for (const [key, node] of Object.entries(el.views)) {
+    node.classList.toggle('is-active', key === name);
+  }
+  syncUpdateBar();
+  window.scrollTo(0, 0);
+}
+
+/* ---------------- ホーム ---------------- */
+
+async function initHome() {
+  showView('home');
+  const saved = lastChoice.get();
+  if (saved?.mode) setMode(saved.mode);
+
+  try {
+    const sheets = await listSheets();
+    renderSheetList(sheets, saved?.sheetId);
+    renderResume(sheets);
+  } catch (err) {
+    el.sheetList.innerHTML = '';
+    showError(`Sorry, the lists did not load.\n${err.message}`);
+  }
+}
+
+function renderSheetList(sheets, savedSheetId) {
+  el.sheetList.innerHTML = '';
+  if (!sheets.length) {
+    el.sheetList.innerHTML = '<p class="loading">No word lists yet</p>';
+    return;
+  }
+  for (const sheet of sheets) {
+    const row = document.createElement('div');
+    row.className = 'sheet-row';
+
+    const pick = document.createElement('button');
+    pick.className = 'sheet-btn';
+    pick.innerHTML = `<span>${escapeHtml(sheet.name)}</span><span class="check">✅</span>`;
+    pick.addEventListener('click', () => selectSheet(sheet, pick));
+
+    const open = document.createElement('button');
+    open.className = 'list-btn';
+    open.textContent = '📖';
+    open.setAttribute('aria-label', `See all words in ${sheet.name}`);
+    open.addEventListener('click', () => openList(sheet));
+
+    row.append(pick, open);
+    el.sheetList.appendChild(row);
+    // 前回えらんだシートを最初から選んでおく
+    if (sheet.id === savedSheetId) selectSheet(sheet, pick);
+  }
+}
+
+function selectSheet(sheet, btn) {
+  selected.sheetId = sheet.id;
+  selected.sheetName = sheet.name;
+  el.sheetList.querySelectorAll('.sheet-btn').forEach((node) => node.classList.toggle('is-on', node === btn));
+  el.startBtn.disabled = false;
+  hideError();
+}
+
+function setMode(mode) {
+  selected.mode = mode;
+  el.modeBtns.forEach((b) => b.classList.toggle('is-on', b.dataset.mode === mode));
+}
+
+function renderResume(sheets) {
+  const saved = session.get();
+  const known = sheets.some((s) => s.id === saved?.sheetId);
+  if (!saved || !saved.queue?.length || !known) {
+    el.resumeBox.hidden = true;
+    return;
+  }
+  el.resumeBox.hidden = false;
+  el.resumeInfo.textContent = `${saved.sheetName} — ${saved.queue.length} cards left`;
+}
+
+/** 読み上げの速さ（トップページ下部の設定） */
+function setSpeed(rate, { preview = false } = {}) {
+  speech.setRate(rate);
+  speed.set(rate);
+  el.speedBtns.forEach((b) => b.classList.toggle('is-on', Number(b.dataset.rate) === rate));
+  updateVoiceInfo();
+  if (preview) {
+    speech.unlock();
+    // 1単語だと速さの違いが分かりにくいので、短い文で試聴する
+    speech.speak('This is how fast I read.');
+  }
+}
+
+/** 使える声を一覧に並べる（iOSでは声があとから増えるので、その都度作り直す） */
+function renderVoiceOptions() {
+  const voices = speech.listVoices();
+  const saved = voiceName.get();
+  el.voiceSelect.innerHTML = '';
+
+  const auto = document.createElement('option');
+  auto.value = '';
+  auto.textContent = `Auto (${voices.length} voices found)`;
+  el.voiceSelect.appendChild(auto);
+
+  const groups = [
+    ['English', voices.filter((v) => v.isEnglish)],
+    ['Other languages', voices.filter((v) => !v.isEnglish)],
+  ];
+  for (const [label, list] of groups) {
+    if (!list.length) continue;
+    const group = document.createElement('optgroup');
+    group.label = label;
+    for (const v of list) {
+      const option = document.createElement('option');
+      option.value = v.name;
+      option.textContent = `${v.name} (${v.lang})`;
+      group.appendChild(option);
+    }
+    el.voiceSelect.appendChild(group);
+  }
+  el.voiceSelect.value = saved && voices.some((v) => v.name === saved) ? saved : '';
+}
+
+function updateVoiceInfo() {
+  const v = speech.currentVoice();
+  el.voiceInfo.textContent = `v${APP_VERSION} · 🔊 ${v ? v.name : 'default voice'} · speed ${speech.getRate()}`;
+}
+
+function showError(message) {
+  el.homeError.textContent = message;
+  el.homeError.hidden = false;
+}
+
+function hideError() {
+  el.homeError.hidden = true;
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+/* ---------------- 新しい版のお知らせ ---------------- */
+
+const UPDATE_CHECK_INTERVAL = 5 * 60 * 1000;   // 確認しすぎないように5分あける
+let lastUpdateCheck = 0;
+let updateAvailable = false;
+
+/** お知らせはホームにいるときだけ出す（学習中に画面を隠さないように） */
+function syncUpdateBar() {
+  el.updateBar.hidden = !(updateAvailable && el.views.home.classList.contains('is-active'));
+}
+
+/** 公開されている版と、いま動いている版を見くらべる */
+async function checkForUpdate() {
+  const now = Date.now();
+  if (updateAvailable || now - lastUpdateCheck < UPDATE_CHECK_INTERVAL) return;
+  lastUpdateCheck = now;
+  try {
+    const res = await fetch(`version.json?t=${now}`, { cache: 'no-store' });
+    if (!res.ok) return;
+    const { version } = await res.json();
+    updateAvailable = !!version && version !== APP_VERSION;
+    syncUpdateBar();
+  } catch (_) { /* つながらないときは何も出さない */ }
+}
+
+/** 古いHTMLが使われないよう、URLを変えて読み込み直す */
+function applyUpdate() {
+  const url = new URL(window.location.href);
+  url.searchParams.set('u', String(Date.now()));
+  window.location.replace(url.toString());
+}
+
+/** 更新のために付けた ?u=... を、アドレスバーから消しておく */
+function tidyUpdateParam() {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has('u')) return;
+  url.searchParams.delete('u');
+  window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+}
+
+/* ---------------- 単語一覧 ---------------- */
+
+/** Vol の単語をぜんぶ並べて見せる（発音も確認できる） */
+async function openList(sheet) {
+  speech.unlock();                      // 一覧のタップで音が出るようにしておく
+  showView('list');
+  el.listTitle.textContent = sheet.name;
+  el.listCount.textContent = '';
+  el.wordList.innerHTML = '<p class="loading">Loading…</p>';
+
+  try {
+    renderWordList(await loadCards(sheet.id));
+  } catch (err) {
+    el.wordList.innerHTML = '';
+    const message = document.createElement('p');
+    message.className = 'error';
+    message.textContent = `Sorry, the words did not load.\n${err.message}`;
+    el.wordList.appendChild(message);
+  }
+}
+
+function renderWordList(cards) {
+  el.listCount.textContent = `${cards.length} words`;
+  el.wordList.innerHTML = '';
+
+  cards.forEach((card, index) => {
+    const row = document.createElement('div');
+    row.className = 'word-row';
+
+    const no = document.createElement('span');
+    no.className = 'word-no';
+    no.textContent = String(index + 1);
+
+    const text = document.createElement('div');
+    text.className = 'word-text';
+    const en = document.createElement('p');
+    en.className = 'word-en';
+    en.textContent = card.word;
+    text.appendChild(en);
+    if (card.ja) {
+      const ja = document.createElement('p');
+      ja.className = 'word-ja';
+      ja.textContent = card.ja;
+      text.appendChild(ja);
+    }
+
+    const play = document.createElement('button');
+    play.className = 'word-speak';
+    play.textContent = '🔊';
+    play.setAttribute('aria-label', `Play ${card.word}`);
+    play.addEventListener('click', () => {
+      speech.speak(card.word, {
+        onStart: () => play.classList.add('is-speaking'),
+        onEnd: () => play.classList.remove('is-speaking'),
+      });
+    });
+
+    row.append(no, text, play);
+    el.wordList.appendChild(row);
+  });
+}
+
+function closeList() {
+  speech.stop();
+  showView('home');
+}
+
+/* ---------------- 学習の開始 ---------------- */
+
+function shuffle(list) {
+  const arr = [...list];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+async function startStudy() {
+  if (!selected.sheetId) return;
+  speech.unlock();
+  el.startBtn.disabled = true;
+  el.startBtn.textContent = 'Loading…';
+  try {
+    const cards = await loadCards(selected.sheetId);
+    if (!cards.length) throw new Error('This list has no words');
+    state = {
+      sheetId: selected.sheetId,
+      sheetName: selected.sheetName,
+      mode: selected.mode,
+      total: cards.length,
+      learned: 0,
+      queue: selected.mode === 'random' ? shuffle(cards) : cards,
+    };
+    lastChoice.set(state.sheetId, state.mode);
+    session.set(state);
+    enterStudy();
+  } catch (err) {
+    showError(`Sorry, the words did not load.\n${err.message}`);
+  } finally {
+    el.startBtn.disabled = false;
+    el.startBtn.textContent = 'Start 🚀';
+  }
+}
+
+function resumeStudy() {
+  const saved = session.get();
+  if (!saved?.queue?.length) return;
+  speech.unlock();
+  state = saved;
+  enterStudy();
+}
+
+function enterStudy() {
+  showView('study');
+  el.sheetName.textContent = state.sheetName;
+  showCard({ speak: CONFIG.autoSpeak });
+}
+
+/* ---------------- カード表示 ---------------- */
+
+function currentCard() {
+  return state?.queue[0] || null;
+}
+
+function later(fn, ms) {
+  timers.push(setTimeout(fn, ms));
+}
+
+/** 予約ずみの読み上げ・表示をとりやめる（連打や中断のとき） */
+function cancelPending() {
+  timers.forEach(clearTimeout);
+  timers = [];
+}
+
+function showCard({ speak: doSpeak = false, afterFlip = false } = {}) {
+  cancelPending();
+  speech.stop();
+
+  const card = currentCard();
+  if (!card) return finish();
+
+  setFlipped(false);
+  const render = () => {
+    el.cardWord.textContent = card.word;
+    el.cardJa.textContent = card.ja || '';
+    el.cardJa.hidden = !card.ja;
+  };
+  // 裏返っている途中に次の単語が見えてしまわないよう、半分回ってから差し替える
+  if (afterFlip) later(render, FLIP_MS / 2);
+  else render();
+
+  updateProgress();
+  if (doSpeak) later(speakCurrent, CONFIG.autoSpeakDelay);
+}
+
+function setFlipped(flipped) {
+  el.card.classList.toggle('is-flipped', flipped);
+  el.flipBtn.hidden = flipped;
+  el.answerRow.hidden = !flipped;
+}
+
+function updateProgress() {
+  const remaining = state.queue.length;
+  el.progress.textContent = `${remaining} left`;
+  const done = Math.max(0, state.total - remaining);
+  el.progressFill.style.width = `${Math.round((done / state.total) * 100)}%`;
+}
+
+function speakCurrent() {
+  const card = currentCard();
+  if (!card) return;
+  speech.speak(card.word, {
+    onStart: () => el.speakBtn.classList.add('is-speaking'),
+    onEnd: () => el.speakBtn.classList.remove('is-speaking'),
+  });
+}
+
+/* ---------------- 回答 ---------------- */
+
+function answer(known) {
+  if (!state?.queue.length) return;
+  const card = state.queue.shift();
+  if (known) {
+    state.learned++;
+  } else {
+    state.queue.push(card); // 「まだ」は最後にまわして あとで もういちど
+  }
+  session.set(state);
+
+  if (!state.queue.length) return finish();
+  showCard({ speak: CONFIG.autoSpeak, afterFlip: true });
+}
+
+function finish() {
+  cancelPending();
+  speech.stop();
+  session.clear();
+  el.doneDetail.textContent = `${state.sheetName} · ${state.total} cards`;
+  showView('done');
+}
+
+function quitStudy() {
+  cancelPending();
+  speech.stop();
+  session.set(state); // 途中でやめても「つづきから」で戻れる
+  state = null;
+  initHome();
+}
+
+/* ---------------- イベント ---------------- */
+
+el.modeBtns.forEach((btn) => btn.addEventListener('click', () => setMode(btn.dataset.mode)));
+el.startBtn.addEventListener('click', startStudy);
+el.resumeBtn.addEventListener('click', resumeStudy);
+el.quitBtn.addEventListener('click', quitStudy);
+el.listBackBtn.addEventListener('click', closeList);
+el.speakBtn.addEventListener('click', (e) => {
+  e.stopPropagation(); cancelPending(); speech.unlock(); speakCurrent();
+});
+el.speakBtnBack.addEventListener('click', (e) => {
+  e.stopPropagation(); cancelPending(); speakCurrent();
+});
+el.flipBtn.addEventListener('click', () => setFlipped(true));
+el.card.addEventListener('click', () => { if (!el.card.classList.contains('is-flipped')) setFlipped(true); });
+el.yesBtn.addEventListener('click', () => answer(true));
+el.noBtn.addEventListener('click', () => answer(false));
+el.againBtn.addEventListener('click', () => { selected.sheetId = state.sheetId; selected.sheetName = state.sheetName; startStudy(); });
+el.homeBtn.addEventListener('click', () => { state = null; initHome(); });
+
+el.voiceSelect.addEventListener('change', () => {
+  const name = el.voiceSelect.value || null;
+  voiceName.set(name);
+  speech.setVoiceName(name);
+  speech.unlock();
+  speech.speak('This is how fast I read.');   // 選んだ声をその場で確かめられるように
+});
+
+el.speedBtns.forEach((btn) => {
+  btn.addEventListener('click', () => setSpeed(Number(btn.dataset.rate), { preview: true }));
+});
+
+el.updateBar.addEventListener('click', applyUpdate);
+
+// iPhoneの設定で声を変えて戻ってきたら、選び直して表示を更新する
+// ついでに、新しい版が出ていないかも確認する
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  speech.refreshVoice();
+  checkForUpdate();
+});
+window.addEventListener('pageshow', () => speech.refreshVoice());
+
+// いま読み込まれている版と、実際に使われる声・速さを画面の下に出す（設定の確認用）
+speech.setVoiceName(voiceName.get());
+speech.onVoiceChange(() => {
+  renderVoiceOptions();
+  updateVoiceInfo();
+});
+setSpeed(speed.get() ?? CONFIG.speech.rate);
+
+tidyUpdateParam();
+checkForUpdate();
+initHome();
