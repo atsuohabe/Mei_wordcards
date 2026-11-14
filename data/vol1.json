@@ -1,100 +1,44 @@
 {
   "cards": [
     {
-      "word": "blade",
-      "ja": "刃（は）"
+      "word": "brim",
+      "ja": "縁（ふち）、帽子（ぼうし）のつば"
     },
     {
-      "word": "gray",
-      "ja": "灰（はい）色"
+      "word": "crib",
+      "ja": "ベビーベッド"
     },
     {
-      "word": "past",
-      "ja": "過（か）去"
+      "word": "crop",
+      "ja": "作物（さくもつ）"
     },
     {
-      "word": "quake",
-      "ja": "地（じ）しん"
+      "word": "drop",
+      "ja": "しずく、落とす（おとす）"
     },
     {
-      "word": "magic",
-      "ja": "まほう"
+      "word": "drag",
+      "ja": "引きずる（ひきずる）"
     },
     {
-      "word": "delay",
-      "ja": "おくれ"
+      "word": "fret",
+      "ja": "心配する（しんぱいする）"
     },
     {
-      "word": "amaze",
-      "ja": "おどろかせる"
+      "word": "press",
+      "ja": "押す（おす）"
     },
     {
-      "word": "drain",
-      "ja": "水をながす"
+      "word": "pram",
+      "ja": "ベビーカー、乳母車（うばぐるま）"
     },
     {
-      "word": "maybe",
-      "ja": "たぶん"
+      "word": "trust",
+      "ja": "信じる（しんじる）、信頼（しんらい）"
     },
     {
-      "word": "break",
-      "ja": "こわす・休み"
-    },
-    {
-      "word": "sale",
-      "ja": "セール・売り"
-    },
-    {
-      "word": "hang",
-      "ja": "ぶら下げる"
-    },
-    {
-      "word": "stain",
-      "ja": "シミ・よごれ"
-    },
-    {
-      "word": "glass",
-      "ja": "ガラス・コップ"
-    },
-    {
-      "word": "raft",
-      "ja": "いかだ"
-    },
-    {
-      "word": "jail",
-      "ja": "ろうや"
-    },
-    {
-      "word": "crayon",
-      "ja": "クレヨン"
-    },
-    {
-      "word": "fact",
-      "ja": "事実"
-    },
-    {
-      "word": "stale",
-      "ja": "古くなった"
-    },
-    {
-      "word": "steak",
-      "ja": "ステーキ"
-    },
-    {
-      "word": "ashamed",
-      "ja": "はずかしい"
-    },
-    {
-      "word": "remain",
-      "ja": "残（のこ）る"
-    },
-    {
-      "word": "grasp",
-      "ja": "つかむ"
-    },
-    {
-      "word": "exact",
-      "ja": "正（せい）かくな"
+      "word": "trunk",
+      "ja": "木（き）の幹（みき）、象（ぞう）の鼻（はな）、トランク"
     }
   ]
 }
